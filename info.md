@@ -73,3 +73,4 @@ Card states
 - Play out of a common deck?
 - Realtime play? (instead of turn based)
   - or rethink the turn (and end turn concept)
+- support for multiple languages?

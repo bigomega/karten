@@ -19,20 +19,58 @@ const CONSTANTS = {
     HEAL: 'HEAL',
     DRAW: 'DRAW',
   },
-  allowedEffects: ['battlecry', 'deathrattle', 'active', 'passive'],
-  allowedStates: ['taunt', 'poisonous', 'ghosted', 'blessed', 'silenced'],
+  allowedEffects: ['BATTLECRY', 'DEATHRATTLE', 'ACTIVE', 'PASSIVE'],
+  allowedStates: ['TAUNT', 'POISONOUS', 'GHOSTED', 'BLESSED', 'SLEEPING', 'SILENCED'],
+  // 'IMMUNE' === 'BLESSED' & 'GHOSTED'
 }
 
 class Spell {
   constructor(castOn) {
-    // { ANY:1, ALL:1, RANDOM:1 }
-    // { CARD:1, PLAYER:1, UNIT:1 }
-    // { SELF:1, ENEMY:1, BOTH:1 }
+/*
+  == ON ==
+  -1 ([ ANY / ALL / RANDOM ])
+  -2 ([ CARD / PLAYER / UNIT ])
+  | if -2 CARD
+  |  -3 ([ SELF / ENEMY / BOTH ])
+  |  -4 ([ BOARD / HAND / DECK ])
 
-    // "PLAYER" only allowed
-    //   - ANY + PLAYER + BOTH
-    //   - RANDOM + PLAYER + BOTH
-    //   // rework when we have more than 2 players
+  == DO ==
+  | if -2 CARD
+  |  -a ([ KILL / CHANGE_HEALTH / CHANGE_ATTACK / STATE ])
+  |  | if -a not KILL
+  |  |  -b ([ SET / ADD / REMOVE ])
+  |  |  | if -a STATE
+  |  |  |  -c STATE_ID():fn
+  |  |  | else
+  |  |  |  -c COUNT():fn
+  | else
+  |  -a ([ CHANGE_HEALTH ])
+  |  -b ([ ADD / REMOVE ])
+  |  -c COUNT():fn
+
+  == UNTIL ==
+  | if -2 CARD & -a not KILL
+  |  -I ([ END / BEGINNING ])
+  |  -II ([ THIS_TURN / NEXT_TURN / PLAYER_NEXT_TURN / GAME ])
+
+  // Compared to hearthstone, this does not cover
+  // - [x] health/attack-modifying spells
+  // - [x] state-modifying spells
+  // - [ ] mana-modifying spells
+  // - [ ] card-cost-modifying spells
+  // - [ ] spell-damage-modifying spells
+  // - [ ] Draw/Discard/Return-to-hand-deck/Copy/Transform/summon/evolve/ card spells
+  // - [ ] discover/choose-one/Joust spells
+  // - [ ] "if" condition for spells (also includes combo & if action while in hand)
+  // - [ ] "when" condition for spells
+  // - [ ] Differentiate between heal and add-health
+  // - [ ] spell to set-health on hero
+
+  // can have SET for non-card too but OP if ALL + UNIT + CHANGE_HEALTH + SET + COUNT(5)
+  // rework when we have more than 2 players (ALL/RANDOM + PLAYER + ENEMY/BOTH)
+*/
+
+    //
 
     // if (castOn in CONSTANTS.unitType || 'BOTH') {
     //   this.castOn =
@@ -40,8 +78,38 @@ class Spell {
   }
 }
 
+class CardCollection {
+  constructor() {
+    this.collection = {};
+  }
+
+  import(dbData) {}
+
+  addCard(){
+    const card = new Card(...arguments)
+    if (this.search({ name: card.name }).length) {
+      // warn
+      return this.search({ name: card.name })[0]
+    }
+    return this.collection[card._id] = card
+  }
+
+  search() {
+    return []
+    // always return array
+  }
+
+  save() {
+    // to DB
+  }
+}
+
 class Card {
   constructor(mana = 0, cardType = CONSTANTS.cardType.MINION, name) {
+    if (!name) {
+      throw 'Card creation error: Name is a mandatory field'
+    }
+    this._id = Card.generateID()
     this.name = name
     this.mana = mana
     if (cardType in CONSTANTS.cardType) {
@@ -50,7 +118,11 @@ class Card {
       // warn
       this.type = 'MINION'
     }
-    return this
+  }
+
+  static generateID() {
+    this._nextId = this._nextId || 1
+    return this._nextId++
   }
 
   addSpell(spell = new Spell) {
@@ -84,7 +156,7 @@ class Card {
     }
     this.effects = this.effects || {}
     Object.keys(effects).forEach(effect => {
-      if (CONSTANTS.allowedEffects.includes(effect)) {
+      if (CONSTANTS.allowedEffects.includes(effect.toUpperCase())) {
         if (effects[effect] instanceof Spell){
           this.effects[effect] = effects[effect]
         } else {
@@ -102,7 +174,7 @@ class Card {
     }
     this.states = this.states || {}
     states.forEach(state => {
-      if (CONSTANTS.allowedStates.includes(state)) {
+      if (CONSTANTS.allowedStates.includes(state.toUpperCase())) {
         this.states[state] = 1
       }
     })
