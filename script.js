@@ -19,62 +19,14 @@ const CONSTANTS = {
     HEAL: 'HEAL',
     DRAW: 'DRAW',
   },
-  allowedEffects: ['BATTLECRY', 'DEATHRATTLE', 'ACTIVE', 'PASSIVE'],
-  allowedStates: ['TAUNT', 'POISONOUS', 'GHOSTED', 'BLESSED', 'SLEEPING', 'SILENCED'],
+  allowedEffects: ['BATTLECRY', 'DEATHRATTLE', 'PASSIVE'], // ACTIVE?
+  allowedStates: ['TAUNT', 'POISONOUS', 'BLESSED', 'SLEEPING', 'WINDFURY', 'SILENCED'], // Blessed?
   // 'IMMUNE' === 'BLESSED' & 'GHOSTED'
 }
 
 class Spell {
   constructor(castOn) {
-/*
-  == ON ==
-  -1 ([ ANY / ALL / RANDOM ])
-  -2 ([ CARD / PLAYER / UNIT ])
-  | if -2 CARD
-  |  -3 ([ SELF / ENEMY / BOTH ])
-  |  -4 ([ BOARD / HAND / DECK ])
-
-  == DO ==
-  | if -2 CARD
-  |  -a ([ KILL / CHANGE_HEALTH / CHANGE_ATTACK / STATE ])
-  |  | if -a not KILL
-  |  |  -b ([ SET / ADD / REMOVE ])
-  |  |  | if -a STATE
-  |  |  |  -c STATE_ID():fn
-  |  |  | else
-  |  |  |  -c COUNT():fn
-  | else
-  |  -a ([ CHANGE_HEALTH ])
-  |  -b ([ ADD / REMOVE ])
-  |  -c COUNT():fn
-
-  == UNTIL ==
-  | if -2 CARD & -a not KILL
-  |  -I ([ END / BEGINNING ])
-  |  -II ([ THIS_TURN / NEXT_TURN / PLAYER_NEXT_TURN / GAME ])
-
-  // Compared to hearthstone, this does not cover
-  // - [x] health/attack-modifying spells
-  // - [x] state-modifying spells
-  // - [ ] mana-modifying spells
-  // - [ ] card-cost-modifying spells
-  // - [ ] spell-damage-modifying spells
-  // - [ ] Draw/Discard/Return-to-hand-deck/Copy/Transform/summon/evolve/ card spells
-  // - [ ] discover/choose-one/Joust spells
-  // - [ ] "if" condition for spells (also includes combo & if action while in hand)
-  // - [ ] "when" condition for spells
-  // - [ ] Differentiate between heal and add-health
-  // - [ ] spell to set-health on hero
-
-  // can have SET for non-card too but OP if ALL + UNIT + CHANGE_HEALTH + SET + COUNT(5)
-  // rework when we have more than 2 players (ALL/RANDOM + PLAYER + ENEMY/BOTH)
-*/
-
     //
-
-    // if (castOn in CONSTANTS.unitType || 'BOTH') {
-    //   this.castOn =
-    // }
   }
 }
 
