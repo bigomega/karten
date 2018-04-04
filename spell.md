@@ -54,8 +54,10 @@
   // - [ ] "if" condition for spells (also includes combo & if action while in hand)
   // - [ ] "when" condition for spells
   // - [ ] Differentiate between heal and add-health
-  // - [ ] spell to set-health on hero
   // - [ ] spell cost health instead of mana
+  // - [ ] Quest
+  // - [ ] permanent passive spells (like in katakombs)
+  // - [ ] spell to set-health on hero
 
   // can have SET for non-card too but OP if ALL + UNIT + CHANGE_HEALTH + SET + COUNT(5)
   // rework when we have more than 2 players (ALL/RANDOM + PLAYER + ENEMY/BOTH)
