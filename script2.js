@@ -4,6 +4,15 @@ Number.prototype[Symbol.iterator] = function* () {
   }
 }
 
+Object.prototype[Symbol.iterator] = function* () {
+  const keyArray = Object.keys(this)
+  for (i=0; i<keyArray.length; i++) {
+    const key = keyArray[i]
+    // this[key].__key = key
+    yield this[key]
+  }
+}
+
 const CONSTANTS = {
   unitType: {
     PLAYER: 'PLAYER',
@@ -51,9 +60,25 @@ class CardCollection {
     return this.collection[card.id] = card
   }
 
-  search() {
+  search({ id, name, mana, tags }) {
+    if (id) {
+      const card = this.collection[id]
+      return card ? [card] : []
+    }
+    if (name) {
+      return [...this.collection].reduce((mem, card) =>
+        card.name.toLowerCase().includes(name.toLowerCase()) ? mem.concat([card]) : mem
+      , [])
+    }
     return []
     // always return array
+  }
+
+  generatDeck(cardIds = []){
+    return []
+      .concat(...cardIds.map(cid => this.search({ id: cid })))
+      .map(card => card.duplicate())
+    ;
   }
 
   save() {
@@ -62,13 +87,15 @@ class CardCollection {
 }
 
 class Card {
-  constructor(mana = 0, cardType = CONSTANTS.cardType.MINION, name) {
+  constructor({ mana = 0, cardType = CONSTANTS.cardType.MINION, name, stat = [], states = [] }) {
     if (!name) {
       throw 'Card creation error: Name is a mandatory field'
     }
     this.id = Card.generateID()
     this.name = name
     this.mana = mana
+    this.setOriginalStat(...stat)
+    this.setOriginalStates(states)
     if (cardType in CONSTANTS.cardType) {
       this.type = cardType
     } else {
@@ -96,7 +123,7 @@ class Card {
     return this
   }
 
-  setStats(attack = 0, health = 1) {
+  setOriginalStat(attack = 0, health = 1) {
     if (this.type !== CONSTANTS.cardType.MINION) {
       // warn
       return this
@@ -124,7 +151,7 @@ class Card {
   //   return this
   // }
 
-  addStates(states = []) {
+  setOriginalStates(states = []) {
     if (this.type !== CONSTANTS.cardType.MINION) {
       // warn
       return this
@@ -137,10 +164,10 @@ class Card {
     })
     return this
   }
-}
 
-class Tracker {
-  constructor(){}
+  duplicate() {
+    return JSON.parse(JSON.stringify(this))
+  }
 }
 
 class Deck {
@@ -160,10 +187,6 @@ class Deck {
     return this
   }
 
-  addCards(){
-    Array.from(arguments).map(cid => this.cards.push(cid))
-  }
-
   lastCard(){
     return this.cards[this.cards.length - 1]
   }
@@ -175,20 +198,33 @@ class Deck {
   removeCards(){}
 }
 
-class Player {
-  constructor({ deck = new Deck, health = 30, mana = 1, board = [], hand = [] } = {}){
-    this.id = Player.generateID()
-    this.deck = deck
-    this.health = health
-    this.mana = mana
-    this.board = board
-    this.hand = hand
-    this.deck = deck
+class User {
+  constructor({ catalog = [], deckList = [[]], rank = 25, gold = 100, stats = {} } = {}){
+    this.id = User.generateID()
+    this.deckList = deckList
+  }
+
+  getDeck(deckIndex) {
+    // Todo throw error
+    return this.deckList[deckIndex] || []
   }
 
   static generateID() {
     this._nextId = this._nextId || 1
     return this._nextId++
+  }
+}
+
+class Player {
+  constructor({ user, deck = new Deck, health = 30, mana = 0, hand = [], shuffle = true } = {}){
+    this._user = user
+    this.id = user.id
+    this.health = health
+    this.mana = mana
+    this.hand = hand
+    this.deck = deck
+
+    shuffle && this.deck.shuffle()
   }
 
   drawCards(n = 1) {
@@ -196,27 +232,57 @@ class Player {
   }
 }
 
+class Board {
+  constructor({ playerCount = 2, players = [] }) {
+    this.sides = {}
+    ;[...playerCount].map(i => {
+      this.sides[players[i].id] = { player: players[i], board: [] }
+    })
+  }
+}
+
 class Game {
-  constructor(p1, p2) {
-    this.p1 = p1
-    this.p2 = p2
+  constructor({ players = [] } = {}) {
+    if (players.length < 2) { throw `There must be at least 2 players for a game` }
+    this.players = {}
+
+    players.map(({ user, deck }) => {
+      if (!user || !(user instanceof User)) {
+        throw `Please provide the user for this player`
+      }
+      if (!deck || !(deck instanceof Deck)) {
+        throw `Please provide a deck for this player`
+      }
+
+      this.players[user.id] = new Player({
+        user: user,
+        deck: deck,
+      })
+    })
+
+    this.board = new Board({ players: [...this.players] })
+
     this._state = {
       current_turn: 1,
-      current_player: 1,
+      current_player: [...this.players][0].id,
     }
   }
+
+  do(){}
 
   playCard(){}
 
   attackCard(){}
 
   render(){
-    console.log('p1 - topdeck: ', this.p1.deck.lastCard())
-    console.log('p1 - hand: ', this.p1.hand)
-    console.log('p1 - board: ', this.p1.board)
-    console.log('p2 - board: ', this.p2.board)
-    console.log('p2 - hand: ', this.p2.hand)
-    console.log('p2 - topdeck: ', this.p2.deck.lastCard())
+    const players = [...this.players]
+    console.log(`p1: id(${players[0].id}), p2: id(${players[1].id})`)
+    console.log('p1 - topdeck: ', players[0].deck.lastCard())
+    console.log('p1 - hand: ', players[0].hand)
+    console.log('p1 - board: ', this.board.sides[players[0].id].board)
+    console.log('p2 - board: ', this.board.sides[players[1].id].board)
+    console.log('p2 - hand: ', players[1].hand)
+    console.log('p2 - topdeck: ', players[1].deck.lastCard())
   }
 }
 
@@ -232,29 +298,57 @@ class GameController {
   endGame(){}
 }
 
+// === Classes ===
+
+// Spell
+// Card
+// CardCollection
+// User
+
+// there are 2 "deck", one in-game and one is just a card-id list outside game
+// <> in game
+// Deck
+// Player
+// Board
+// Game
 
 var catalog = new CardCollection()
-var c1 = catalog.addCard(1, 'MINION', 'Sword')
-  .setStats(2,1)
-  .addStates(['CHARGE'])
-;
-var c2 = catalog.addCard(1, 'MINION', 'Shield')
-  .setStats(1,3)
-  .addStates(['taunt'])
-;
-
-var p1 = new Player()
-var p2 = new Player()
-
-;[...15].map(i => {
-  p1.deck.addCards(c1.id, c2.id)
-  p2.deck.addCards(c1.id, c2.id)
+catalog.addCard({
+  mana: 1,
+  cardType: 'MINION',
+  name: 'Sword',
+  stat: [2,1],
+  states: ['charge'],
+})
+catalog.addCard({
+  mana: 1,
+  cardType: 'MINION',
+  name: 'Shield',
+  stat: [1,3],
+  states: ['taunt'],
 })
 
-p1.deck.shuffle()
-p2.deck.shuffle()
+var u1 = new User()
+var u2 = new User()
 
-var game = new Game(p1, p2)
-p1.drawCards(3)
-p2.drawCards(3)
+;[...15].map(i => {
+  var c1 = catalog.search({ name: 'Sword' })[0]
+  var c2 = catalog.search({ name: 'Shield' })[0]
+  u1.deckList[0].push(c1.id, c2.id)
+  u2.deckList[0].push(c1.id, c2.id)
+})
+
+// picked by user
+var deckIndex = 0
+
+var game = new Game({
+  players: [
+    { user: u1, deck: new Deck(catalog.generatDeck(u1.getDeck(deckIndex))), playerConfig: {} },
+    { user: u2, deck: new Deck(catalog.generatDeck(u2.getDeck(deckIndex))), playerConfig: {} },
+  ]
+})
+
+;[...game.players][0].drawCards(3)
+;[...game.players][1].drawCards(3)
+
 game.render()

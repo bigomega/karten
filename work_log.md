@@ -5,4 +5,4 @@
 - Spell definition from scratch again [V3](spell-v3.md) (file is ~ 500 lines long)
 - Took a step back, tried to write a JSON for spell definition ([spell.js](spell.js))
 - Tried thinking of a simpler version ([spell-2.js](spell-2.js))
-- Ignoring the spells and trying to build a basic minion only game ([script2.js](script2.js))
+- `4 Apr` Ignoring the spells and trying to build a basic minion only game ([script2.js](script2.js))
