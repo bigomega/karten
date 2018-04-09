@@ -87,21 +87,24 @@ class CardCollection {
 }
 
 class Card {
-  constructor({ mana = 0, cardType = CONSTANTS.cardType.MINION, name, stat = [], states = [] }) {
+  constructor({ mana = 0, cardType = CONSTANTS.cardType.MINION, name, stat = [], states = [], tags = [] }) {
     if (!name) {
       throw 'Card creation error: Name is a mandatory field'
     }
-    this.id = Card.generateID()
-    this.name = name
-    this.mana = mana
-    this.setOriginalStat(...stat)
-    this.setOriginalStates(states)
     if (cardType in CONSTANTS.cardType) {
       this.type = cardType
     } else {
       // warn
       this.type = 'MINION'
     }
+
+    this.id = Card.generateID()
+    this.name = name
+    this.tags = tags
+    this.default = { mana }
+    this.buffs = []
+    this.setOriginalStat(...stat)
+    this.setOriginalStates(states)
   }
 
   static generateID() {
@@ -128,8 +131,8 @@ class Card {
       // warn
       return this
     }
-    this.attack = attack
-    this.health = health
+    this.default.attack = attack
+    this.default.health = health
     return this
   }
 
@@ -156,10 +159,10 @@ class Card {
       // warn
       return this
     }
-    this._states = this._states || {}
+    this.default.states = {}
     states.forEach(state => {
       if (CONSTANTS.allowedStates.includes(state.toUpperCase())) {
-        this._states[state] = 1
+        this.default.states[state] = 1
       }
     })
     return this
@@ -199,9 +202,11 @@ class Deck {
 }
 
 class User {
-  constructor({ catalog = [], deckList = [[]], rank = 25, gold = 100, stats = {} } = {}){
+  constructor({ catalog = [], deckList = [[]], rank = 25, gold = 100, stats = {}, username, pass } = {}){
+    if (!username || !pass) { throw `Need a username and password` }
     this.id = User.generateID()
     this.deckList = deckList
+    this.name = name
   }
 
   getDeck(deckIndex) {
@@ -215,12 +220,14 @@ class User {
   }
 }
 
+// Player is just a game state. user makes the actions, player stat gets changed
 class Player {
-  constructor({ user, deck = new Deck, health = 30, mana = 0, hand = [], shuffle = true } = {}){
+  constructor({ user, deck = new Deck, health = 30, mana = 0, manaPool = 0, hand = [], shuffle = true } = {}){
     this._user = user
     this.id = user.id
     this.health = health
     this.mana = mana
+    this.manaPool = manaPool
     this.hand = hand
     this.deck = deck
 
@@ -258,31 +265,86 @@ class Game {
         user: user,
         deck: deck,
       })
+      user._currentGame = this
     })
 
     this.board = new Board({ players: [...this.players] })
 
     this._state = {
       current_turn: 1,
-      current_player: [...this.players][0].id,
+      current_player: [...this.players][0],
+      current_player_index: 0,
+      player_id_array: [...this.players].map(p => p.id),
     }
+    this.newTurnInit()
   }
 
   do(){}
 
-  playCard(){}
+  newTurnInit() {
+    this.giveManaPool({ player: this._state.current_player, mana: 1 })
+    this.giveMana({ player: this._state.current_player, mana: Infinity })
+  }
 
-  attackCard(){}
+  giveMana({ player, mana = 1 } = {}) {
+    if (isFinite(mana)) {
+      player.mana = mana
+    } else {
+      // fill the pool
+      player.mana = player.manaPool
+    }
+  }
+
+  giveManaPool({ player, mana = 1 } = {}) {
+    player.manaPool += 1
+  }
+
+  userPlayCard(uId, cardIndex){
+    // if (!this.players[uId]) { throw `User not a part of the game.` } // redundant
+    if (uId !== this._state.current_player.id) { throw `Not this user's turn to play` }
+    const card = this._state.current_player.hand.splice(cardIndex, 1)
+    // todo: need to improve positioning, need to add events
+    this.board.sides[uId].board.push(card.pop()) // or [0]
+  }
+
+  userCardAttack(uId, boardIndex, { self = false, targetIndex = -1 }){
+    // index for any card in the board, -1 for hero
+    if (uId !== this._state.current_player.id) { throw `Not this user's turn to play` }
+    // TK need to put this ^ in a common place
+    if (boardIndex >= this.board.sides[uId].board.length) { throw `<fnName>: Card position not found` }
+    if (targetIndex === -1) {
+      // if ()
+      // TODO rewrite for TWO PLAYER ONLY
+    }
+  }
+
+  userEndTurn(uId) {
+    if (this._checkGameEnd()) {
+      return console.log('game has ended')
+    }
+    if (uId !== this._state.current_player.id) { throw `Not this user's turn to play` }
+    // TK shame. shame. shame.
+    this._state.current_turn += 1
+    this._state.current_player_index += 1
+    this._state.current_player_index = this._state.current_player_index >= this._state.player_id_array.length ? 0 : this._state.current_player_index
+    this._state.current_player = this.players[this._state.player_id_array[this._state.current_player_index]]
+  }
+
+  _checkGameEnd() {
+    // warn: will fail for negative health
+    return !([...this.players].reduce((mem,p) => mem * p.health, 1))
+  }
 
   render(){
     const players = [...this.players]
     console.log(`p1: id(${players[0].id}), p2: id(${players[1].id})`)
     console.log('p1 - topdeck: ', players[0].deck.lastCard())
-    console.log('p1 - hand: ', players[0].hand)
-    console.log('p1 - board: ', this.board.sides[players[0].id].board)
-    console.log('p2 - board: ', this.board.sides[players[1].id].board)
-    console.log('p2 - hand: ', players[1].hand)
+    console.log('p1 - hand: ', players[0].hand.map(c => c.id))
+    console.log('p1 - board: ', this.board.sides[players[0].id].board.map(c => c.id))
+    console.log('p2 - board: ', this.board.sides[players[1].id].board.map(c => c.id))
+    console.log('p2 - hand: ', players[1].hand.map(c => c.id))
     console.log('p2 - topdeck: ', players[1].deck.lastCard())
+    console.log([...20].map(i => '-').join(''))
   }
 }
 
@@ -328,8 +390,8 @@ catalog.addCard({
   states: ['taunt'],
 })
 
-var u1 = new User()
-var u2 = new User()
+var u1 = new User({ username: 'foo', pass: 'pass' })
+var u2 = new User({ username: 'bar', pass: 'pass' })
 
 ;[...15].map(i => {
   var c1 = catalog.search({ name: 'Sword' })[0]
@@ -351,4 +413,8 @@ var game = new Game({
 ;[...game.players][0].drawCards(3)
 ;[...game.players][1].drawCards(3)
 
+game.render()
+game.userPlayCard(u1.id, 0)
+game.userCardAttack(u1.id, 0, { targetIndex: -1 })
+game.userEndTurn(u1.id)
 game.render()
