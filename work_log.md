@@ -10,9 +10,10 @@
   - Option to play, attack, end turn
   - health reduction of minions and player
   - Sleep, charge and taunt
-  -x limit hands and board
+  - limit hands and board
   -x better render console
-  -x code file structuring
+  -x tech debts (v1)
+  -x Mulligan and game start
   -x UI render (basic)
   - Do not write anymore steps
 

@@ -1,3 +1,4 @@
+// todo: split this goddamn huge file into multiple modules
 Number.prototype[Symbol.iterator] = function* () {
   for (i=0; i<this; i++) {
     yield i
@@ -21,26 +22,47 @@ Array.prototype.findIndexes = Array.prototype.findIndices = function findIndexes
   return this.reduce((mem, val, i) => callback(val, i) ? mem.concat([i]) : mem, [])
 }
 
+// utils
+function limitedArrayPush(limit, name = 'array') {
+  return function(...args) {
+    if (this.length < limit) {
+      Array.prototype.push.call(this, ...args)
+    } else {
+      console.warn(`Pushing beyond ${name} limit`)
+    }
+    return this
+  }
+}
+function limitedArraySplice(limit, name = 'array') {
+  return function(start, deleteCount, ...args) {
+    if ((this.length + args.length - deleteCount) <= limit) {
+      Array.prototype.splice.call(this, start, deleteCount, ...args)
+    } else {
+      console.warn(`Pushing beyond ${name} limit`)
+    }
+    return this
+  }
+}
+
 const CONSTANTS = {
-  unitType: {
-    PLAYER: 'PLAYER',
-    CARD: 'CARD',
+  GLOBAL_LIMIT: {
+    PLAYERS: 2,
+    BOARD: 7,
+    HAND: 10,
+    DECK: 30,
+    MANAPOOL_LIMIT: 10,
+    USER_DECK_SAME_CARD: Infinity,
+  },
+  GAME_DEFAULTS: {
+    STARTING_HAND: 3,
+    PLAYER_STARTING_HEALTH: 30,
+    PLAYER_STARTING_MANA: 0,
+    TURN_START_CARD_DRAW: 1,
+    TURN_START_MANAPOOL_GAIN: 1,
   },
   cardType: {
     MINION: 'MINION',
     SPELL: 'SPELL',
-  },
-  cardActions: {
-    DAMAGE: 'DAMAGE',
-    HEAL: 'HEAL',
-    ADD_HEALTH: 'ADD_HEALTH',
-    ADD_DAMAGE: 'ADD_DAMAGE',
-    KILL: 'KILL',
-  },
-  playerActions: {
-    DAMAGE: 'DAMAGE',
-    HEAL: 'HEAL',
-    DRAW: 'DRAW',
   },
   allowedEffects: ['BATTLECRY', 'DEATHRATTLE'],
   allowedStates: ['TAUNT', 'POISONOUS', 'BLESSED', 'WINDFURY', 'STEALTH', 'CHARGE'],
@@ -228,13 +250,14 @@ class User {
 
 // Player is just a game state. user makes the actions, player stat gets changed
 class Player {
-  constructor({ user, deck = new Deck, health = 30, mana = 0, manaPool = 0, hand = [], shuffle = true } = {}){
+  constructor({ user, deck = new Deck, health = CONSTANTS.GAME_DEFAULTS.PLAYER_STARTING_HEALTH, manaPool = CONSTANTS.GAME_DEFAULTS.PLAYER_STARTING_MANA, hand = [], shuffle = true } = {}){
     this._user = user
     this.id = user.id
     this.health = health
-    this.mana = mana
-    this.manaPool = manaPool
+    this.manaPool = this.mana = manaPool
     this.hand = hand
+    this.hand.remove = this._removeFromHand.bind(this) // Just a fancier way, can be removed
+    this.hand.push = limitedArrayPush(CONSTANTS.GLOBAL_LIMIT.HAND, `Player-${this.id} hand`)
     this.deck = deck
 
     shuffle && this.deck.shuffle()
@@ -248,17 +271,67 @@ class Player {
     }
   }
 
+  giveMana(mana = 1) {
+    this.setMana(this.mana + mana)
+  }
+
+  setMana(mana = 1) {
+    if (isFinite(mana)) {
+      this.mana = mana
+    } else {
+      // fill the pool
+      this.mana = this.manaPool
+    }
+  }
+
+  giveManaPool(mana = 1) {
+    if (this.manaPool + mana > CONSTANTS.GAME_DEFAULTS.MANAPOOL_LIMIT) {
+      this.manaPool += CONSTANTS.GAME_DEFAULTS.MANAPOOL_LIMIT
+    } else {
+      this.manaPool += mana
+    }
+  }
+
+  _removeFromHand(cardIndex) {
+    this.hand.splice(cardIndex, 1)
+  }
+
+  _giveToHand(card) {
+    // TODO: Card Duplicate issue
+    // if (!(card instanceof Card)) { throw `Hand can only contain cards` }
+    this.hand.push(card)
+  }
+
   drawCards(n = 1) {
-    ;[...n].map(i => this.hand.push(this.deck.pop()))
+    ;[...n].map(i => this._giveToHand(this.deck.pop()))
+  }
+
+  isHandFull() {
+    return this.hand.length >= CONSTANTS.GLOBAL_LIMIT.HAND
   }
 }
 
 class Board {
-  constructor({ playerCount = 2, players = [] }) {
-    this.sides = {}
-    ;[...playerCount].map(i => {
-      this.sides[players[i].id] = { player: players[i], board: [] }
-    })
+  constructor({ player } = {}) {
+    if (!(player && player instanceof Player)) { throw `Board needs a player to initiate` }
+    this.board = []
+    this.board.add = this._addCard.bind(this)
+    this.board.remove = this._removeCard.bind(this)
+    this.board.splice = limitedArraySplice(CONSTANTS.GLOBAL_LIMIT.BOARD, `Player-${player.id} board`)
+    return this.board
+  }
+
+  _addCard(boardIndex, minion) {
+    // TODO: enable after duplicate fix
+    // if (!(minion && minion instanceof Card && minion.type !== CONSTANTS.cardType.MINION)) {
+    //   throw `Board can only add cards`
+    // }
+    this.board.splice(boardIndex, 0, minion)
+    return this
+  }
+
+  _removeCard(boardIndex) {
+    return this.board.splice(boardIndex, 1)
   }
 }
 
@@ -266,6 +339,7 @@ class Game {
   constructor({ players = [] } = {}) {
     if (players.length < 2) { throw `There must be at least 2 players for a game` }
     this.players = {}
+    this.boards = {}
 
     players.map(({ user, deck }) => {
       if (!user || !(user instanceof User)) {
@@ -280,35 +354,26 @@ class Game {
         deck: deck,
       })
       user._currentGame = this
+
+      this.boards[user.id] = new Board({ player: this.players[user.id] })
     })
 
-    this.board = new Board({ players: [...this.players] })
 
     this.state = {
       current_turn: 1,
       current_player: [...this.players][0],
     }
+    this.state.current_player.drawCards(CONSTANTS.GAME_DEFAULTS.STARTING_HAND)
+    this._getPlayer({ isOpponent: true }).drawCards(CONSTANTS.GAME_DEFAULTS.STARTING_HAND + 1)
     this.newTurnInit()
   }
 
   do(){}
 
   newTurnInit() {
-    this.giveManaPool({ player: this.state.current_player, mana: 1 })
-    this.giveMana({ player: this.state.current_player, mana: Infinity })
-  }
-
-  giveMana({ player, mana = 1 } = {}) {
-    if (isFinite(mana)) {
-      player.mana = mana
-    } else {
-      // fill the pool
-      player.mana = player.manaPool
-    }
-  }
-
-  giveManaPool({ player, mana = 1 } = {}) {
-    player.manaPool += 1
+    this.state.current_player.drawCards(CONSTANTS.GAME_DEFAULTS.TURN_START_CARD_DRAW)
+    this.state.current_player.giveManaPool(CONSTANTS.GAME_DEFAULTS.TURN_START_MANAPOOL_GAIN)
+    this.state.current_player.setMana(Infinity)
   }
 
   userPlayCard(pId, cardIndex){
@@ -322,11 +387,10 @@ class Game {
     const card = player.hand[cardIndex]
     if (card.current.mana > player.mana) { throw `userPlayCard: Not enough mana <NOT_ENOUGH_MANA>` }
     if (card.type === CONSTANTS.cardType.MINION) {
-      // todo: write a function to add and remove
-      player.hand.splice(cardIndex, 1)
+      player.hand.remove(cardIndex)
       card.turnPlayed = this.state.current_turn
-      // todo: write a function to add
-      this._getBoard({ pId }).push(card)
+      // todo: get position from user
+      this._getBoard({ pId }).add(0, card)
       player.mana -= 1
     }
   }
@@ -335,7 +399,7 @@ class Game {
     // index for any card in the board, -1 for hero
     this._checkIfPlayerTurn({ pId })
     const minion = this._getBoardMinion({ pId, boardIndex })
-    if (minion.current.attack < 1) { throw `userMinionAttack: Can't attack, no damage <MINION_ZERO_ATTACK>` }
+    if (minion.current.attack < 1) { throw `userMinionAttack: Can't attack, no damage minion <ZERO_ATTACK_MINION>` }
     if (minion.turnPlayed === this.state.current_turn && !minion.current.states[CONSTANTS.states.CHARGE]) {
       throw `userMinionAttack: minion played this turn can't attack <MINION_SLEEPING>`
     }
@@ -360,11 +424,11 @@ class Game {
 
   userEndTurn(uId) {
     this.state.current_turn += 1
-    this.state.current_player = this._getPlayer({ player: this.state.current_player, isOpponent: true })
+    this.state.current_player = this._getPlayer({ isOpponent: true })
     this.newTurnInit()
   }
 
-  _getPlayer({ pId, player, isOpponent = false } = {}) {
+  _getPlayer({ pId, player = this.state.current_player, isOpponent = false } = {}) {
     if (!pId && !(player && player instanceof Player)) {
       throw `Need player Id or the player object instance`
     }
@@ -380,22 +444,21 @@ class Game {
   _getBoard(...args) {
     const id = this._getPlayer(...args).id
     // todo: common logger fn with args and more
-    if (!this.board.sides[id]) { throw `_getBoard: Board not found. Something went wrong. args: ${JSON.stringify(args)}` }
-    return this.board.sides[id].board
+    if (!this.boards[id]) { throw `_getBoard: Board not found. Something went wrong. args: ${JSON.stringify(args)}` }
+    return this.boards[id]
   }
   _getBoardMinion({ boardIndex = 0, board, ...args } = {}) {
     const minion = (board || this._getBoard({...args}))[boardIndex]
     // todo: maybe think about inherting card into spells and minions
-    // TODO: enable after duplicate fix
     // if (!(minion && minion instanceof Card && minion.type !== CONSTANTS.cardType.MINION)) {
     //   throw `_getBoardMinion: Minion not found`
     // }
+    // TODO: enable this ^ after duplicate fix
     return minion
   }
 
   _killMinion({ ...args }) {
-    // const minion = this._getBoardMinion({ ...args })
-    this._getBoard({ ...args }).splice(args.boardIndex, 1)
+    const minion = this._getBoard({ ...args }).remove(args.boardIndex)
   }
 
   _checkIfPlayerTurn({ pId, player = {} } = {}) {
@@ -411,8 +474,8 @@ class Game {
     console.log('p1 - topdeck: ', players[0].deck.lastCard())
     console.log(`p1 - mana: ${players[0].mana}/${players[0].manaPool}`)
     console.log('p1 - hand: ', players[0].hand.map(c => c.id))
-    console.log('p1 - board: ', this.board.sides[players[0].id].board.map(c => c.id))
-    console.log('p2 - board: ', this.board.sides[players[1].id].board.map(c => c.id))
+    console.log('p1 - board: ', this.boards[players[0].id].map(c => c.id))
+    console.log('p2 - board: ', this.boards[players[1].id].map(c => c.id))
     console.log('p2 - hand: ', players[1].hand.map(c => c.id))
     console.log(`p2 - mana: ${players[1].mana}/${players[1].manaPool}`)
     console.log('p2 - topdeck: ', players[1].deck.lastCard())
@@ -491,9 +554,6 @@ var game = new Game({
     { user: u2, deck: new Deck(catalog.generatDeck(u2.getDeck(deckIndex))), playerConfig: {} },
   ]
 })
-
-;[...game.players][0].drawCards(3)
-;[...game.players][1].drawCards(3)
 
 try {
   game.render()
