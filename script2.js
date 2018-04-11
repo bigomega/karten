@@ -13,6 +13,14 @@ Object.prototype[Symbol.iterator] = function* () {
   }
 }
 
+Array.prototype.findIndexes = Array.prototype.findIndices = function findIndexes() {
+  const callback = arguments[0]
+  if (typeof callback !== 'function') {
+    throw new TypeError(`${callback} is not a function`)
+  }
+  return this.reduce((mem, val, i) => callback(val, i) ? mem.concat([i]) : mem, [])
+}
+
 const CONSTANTS = {
   unitType: {
     PLAYER: 'PLAYER',
@@ -66,12 +74,12 @@ class CardCollection {
       return card ? [card] : []
     }
     if (name) {
-      return [...this.collection].reduce((mem, card) =>
-        card.name.toLowerCase().includes(name.toLowerCase()) ? mem.concat([card]) : mem
-      , [])
+      return [...this.collection].filter(card =>
+        card.name.toLowerCase().includes(name.toLowerCase())
+      )
     }
+    // always returns array
     return []
-    // always return array
   }
 
   generatDeck(cardIds = []){
@@ -87,7 +95,7 @@ class CardCollection {
 }
 
 class Card {
-  constructor({ mana = 0, cardType = CONSTANTS.cardType.MINION, name, stat = [], states = [], tags = [] }) {
+  constructor({ mana = 0, cardType = CONSTANTS.cardType.MINION, name, attack = 0, health = 1, states = [], tags = [] } = {}) {
     if (!name) {
       throw 'Card creation error: Name is a mandatory field'
     }
@@ -101,10 +109,22 @@ class Card {
     this.id = Card.generateID()
     this.name = name
     this.tags = tags
-    this.default = { mana }
+    this.default = this.current = { mana }
     this.buffs = []
-    this.setOriginalStat(...stat)
-    this.setOriginalStates(states)
+
+    if (this.type === CONSTANTS.cardType.MINION) {
+      this.default = this.current = {
+        ...this.default,
+        attack: attack,
+        health: health,
+      }
+      this.default.states = this.current.states = {}
+      states.forEach(state => {
+        if (CONSTANTS.allowedStates.includes(state.toUpperCase())) {
+          this.default.states[state] = this.current.states[state] = 1
+        }
+      })
+    }
   }
 
   static generateID() {
@@ -126,13 +146,11 @@ class Card {
     return this
   }
 
-  setOriginalStat(attack = 0, health = 1) {
+  setOriginalStates(states = []) {
     if (this.type !== CONSTANTS.cardType.MINION) {
       // warn
       return this
     }
-    this.default.attack = attack
-    this.default.health = health
     return this
   }
 
@@ -154,21 +172,8 @@ class Card {
   //   return this
   // }
 
-  setOriginalStates(states = []) {
-    if (this.type !== CONSTANTS.cardType.MINION) {
-      // warn
-      return this
-    }
-    this.default.states = {}
-    states.forEach(state => {
-      if (CONSTANTS.allowedStates.includes(state.toUpperCase())) {
-        this.default.states[state] = 1
-      }
-    })
-    return this
-  }
-
   duplicate() {
+    // TODO: FIX THIS (THIS TAKES AWAY THE OBEJECT INSTANCE TYPE)
     return JSON.parse(JSON.stringify(this))
   }
 }
@@ -234,6 +239,14 @@ class Player {
     shuffle && this.deck.shuffle()
   }
 
+  damage(value) {
+    this.health -= value
+    // todo: catch this outside
+    if (this.health <= 0) {
+      throw `Game ended: (${this.id}) WON <GAME_ENDED:${this.id}>`
+    }
+  }
+
   drawCards(n = 1) {
     ;[...n].map(i => this.hand.push(this.deck.pop()))
   }
@@ -270,11 +283,9 @@ class Game {
 
     this.board = new Board({ players: [...this.players] })
 
-    this._state = {
+    this.state = {
       current_turn: 1,
       current_player: [...this.players][0],
-      current_player_index: 0,
-      player_id_array: [...this.players].map(p => p.id),
     }
     this.newTurnInit()
   }
@@ -282,8 +293,8 @@ class Game {
   do(){}
 
   newTurnInit() {
-    this.giveManaPool({ player: this._state.current_player, mana: 1 })
-    this.giveMana({ player: this._state.current_player, mana: Infinity })
+    this.giveManaPool({ player: this.state.current_player, mana: 1 })
+    this.giveMana({ player: this.state.current_player, mana: Infinity })
   }
 
   giveMana({ player, mana = 1 } = {}) {
@@ -299,40 +310,92 @@ class Game {
     player.manaPool += 1
   }
 
-  userPlayCard(uId, cardIndex){
-    // if (!this.players[uId]) { throw `User not a part of the game.` } // redundant
-    if (uId !== this._state.current_player.id) { throw `Not this user's turn to play` }
-    const card = this._state.current_player.hand.splice(cardIndex, 1)
-    // todo: need to improve positioning, need to add events
-    this.board.sides[uId].board.push(card.pop()) // or [0]
+  userPlayCard(pId, cardIndex){
+    this._checkIfPlayerTurn({ pId })
+    const player = this._getPlayer({ pId })
+    if (cardIndex >= player.hand.length) {
+      throw `userPlayCard: Card index not found in hand`
+    }
+    // todo: check can play (also check and allow only at turn start)
+    // todo: need to give positioning options, limit size, need to add events
+    const card = player.hand[cardIndex]
+    if (card.type === CONSTANTS.cardType.MINION) {
+      // todo: write a function to add and remove
+      player.hand.splice(cardIndex, 1)
+      card.turnPlayed = this.state.current_turn
+      // todo: write a function to add
+      this._getBoard({ pId }).push(card)
+    }
   }
 
-  userCardAttack(uId, boardIndex, { self = false, targetIndex = -1 }){
+  userMinionAttack(pId, boardIndex, { isOpponent = true, targetIndex = -1 }){
     // index for any card in the board, -1 for hero
-    if (uId !== this._state.current_player.id) { throw `Not this user's turn to play` }
-    // TK need to put this ^ in a common place
-    if (boardIndex >= this.board.sides[uId].board.length) { throw `<fnName>: Card position not found` }
-    if (targetIndex === -1) {
-      // if ()
-      // TODO rewrite for TWO PLAYER ONLY
+    this._checkIfPlayerTurn({ pId })
+    const selfBoard = this._getBoard({ pId })
+    const enemyBoard = this._getBoard({ pId, isOpponent: true })
+    const minion = this._getBoardMinion({ board: selfBoard, boardIndex })
+    // todo: "when minion attacks" action/secret
+    const tauntIndices = enemyBoard.findIndices(c => c.current.states.taunt)
+    if (tauntIndices.length && !tauntIndices.includes(targetIndex)) {
+      // todo: catch this outside
+      throw `userMinionAttack: Can't attack past taunts (at ${tauntIndices}) <TAUNT_IN_WAY>`
+    }
+    if (targetIndex < 0) {
+      this._getPlayer({ pId, isOpponent: true }).damage(minion.current.attack)
+    } else {
+      const targetMinion = this._getBoardMinion({ board: enemyBoard, boardIndex: targetIndex })
+      targetMinion.current.health -= minion.current.attack
+      minion.current.health -= targetMinion.current.attack
+      // todo: write functions for reduce health
+      minion.current.health <= 0 && this._killMinion({ pId, boardIndex })
+      targetMinion.current.health <= 0 && this._killMinion({ pId, boardIndex: targetIndex, isOpponent: true })
     }
   }
 
   userEndTurn(uId) {
-    if (this._checkGameEnd()) {
-      return console.log('game has ended')
-    }
-    if (uId !== this._state.current_player.id) { throw `Not this user's turn to play` }
-    // TK shame. shame. shame.
-    this._state.current_turn += 1
-    this._state.current_player_index += 1
-    this._state.current_player_index = this._state.current_player_index >= this._state.player_id_array.length ? 0 : this._state.current_player_index
-    this._state.current_player = this.players[this._state.player_id_array[this._state.current_player_index]]
+    this.state.current_turn += 1
+    this.state.current_player = this._getPlayer({ player: this.state.current_player, isOpponent: true })
   }
 
-  _checkGameEnd() {
-    // warn: will fail for negative health
-    return !([...this.players].reduce((mem,p) => mem * p.health, 1))
+  _getPlayer({ pId, player, isOpponent = false } = {}) {
+    if (!pId && !(player && player instanceof Player)) {
+      throw `Need player Id or the player object instance`
+    }
+    let id = pId || player.id
+    if (isOpponent) {
+      id = Object.keys(this.players).filter(k => k != (pId || player.id))[0]
+    }
+    if (!this.players[id]) { throw `Player ${id} doesn't exist in game` }
+    return this.players[id]
+  }
+  _getOpponent({ isOpponent, ...args } = {}) { return this._getPlayer({ isOpponent: true, ...args }) }
+
+  _getBoard(...args) {
+    const id = this._getPlayer(...args).id
+    // todo: common logger fn with args and more
+    if (!this.board.sides[id]) { throw `_getBoard: Board not found. Something went wrong. args: ${JSON.stringify(args)}` }
+    return this.board.sides[id].board
+  }
+  _getBoardMinion({ boardIndex = 0, board, ...args } = {}) {
+    const minion = (board || this._getBoard({...args}))[boardIndex]
+    // todo: maybe think about inherting card into spells and minions
+    // TODO: enable after duplicate fix
+    // if (!(minion && minion instanceof Card && minion.type !== CONSTANTS.cardType.MINION)) {
+    //   throw `_getBoardMinion: Minion not found`
+    // }
+    return minion
+  }
+
+  _killMinion({ ...args }) {
+    // const minion = this._getBoardMinion({ ...args })
+    this._getBoard({ ...args }).splice(args.boardIndex, 1)
+  }
+
+  _checkIfPlayerTurn({ pId, player = {} } = {}) {
+    // todo: turn this into a decorator
+    // if (!this.players[(pId || player.id)]) { throw `User not a part of the game.` } // redundant
+    if ((pId || player.id) !== this.state.current_player.id) { throw `Not this user's turn to play` }
+    return true
   }
 
   render(){
@@ -379,14 +442,16 @@ catalog.addCard({
   mana: 1,
   cardType: 'MINION',
   name: 'Sword',
-  stat: [2,1],
+  attack: 2,
+  health: 1,
   states: ['charge'],
 })
 catalog.addCard({
   mana: 1,
   cardType: 'MINION',
   name: 'Shield',
-  stat: [1,3],
+  attack: 1,
+  health: 3,
   states: ['taunt'],
 })
 
@@ -415,6 +480,13 @@ var game = new Game({
 
 game.render()
 game.userPlayCard(u1.id, 0)
-game.userCardAttack(u1.id, 0, { targetIndex: -1 })
+game.userPlayCard(u1.id, 0)
+game.userPlayCard(u1.id, 0)
+game.userMinionAttack(u1.id, 0, { targetIndex: -1 })
 game.userEndTurn(u1.id)
+
+game.userPlayCard(u2.id, 0)
+game.render()
+
+game.userMinionAttack(u2.id, 0, { targetIndex: 0 })
 game.render()

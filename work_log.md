@@ -8,5 +8,10 @@
 - `4 Apr` Ignoring the spells and trying to build a basic minion only game ([script2.js](script2.js))
   - Have a game, players, card collection, fill hands and deck
   - Option to play, attack, end turn
+  - health reduction of minions and player
+  -x Sleep, charge and taunt
+  -x better render console
   -x Make it multiplayer
+  -x UI render (basic)
+  - Do not write anymore steps
 
