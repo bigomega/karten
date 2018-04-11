@@ -23,24 +23,40 @@ Array.prototype.findIndexes = Array.prototype.findIndices = function findIndexes
 }
 
 // utils
-function limitedArrayPush(limit, name = 'array') {
-  return function(...args) {
-    if (this.length < limit) {
-      Array.prototype.push.call(this, ...args)
-    } else {
-      console.warn(`Pushing beyond ${name} limit`)
-    }
+class LimitedArray extends Array {
+  constructor(...args) {
+    super(...args)
+    this.limit = 50
+  }
+
+  setLimit(limit = 50) {
+    this.limit = limit
+    this.push() // to remove extras
     return this
   }
-}
-function limitedArraySplice(limit, name = 'array') {
-  return function(start, deleteCount, ...args) {
-    if ((this.length + args.length - deleteCount) <= limit) {
-      Array.prototype.splice.call(this, start, deleteCount, ...args)
+
+  push(...args) {
+    if (this.length + args.length <= this.limit) {
+      return Array.prototype.push.call(this, ...args)
     } else {
-      console.warn(`Pushing beyond ${name} limit`)
+      ;[...(this.length - this.limit)].map(i => this.pop())
+      console.warn(`LimitedArray: Pushing beyond limit`)
+      return this.length
     }
-    return this
+  }
+
+  splice(start, deleteCount, ...args) {
+    if ((this.length + args.length - deleteCount) <= this.limit) {
+      return Array.prototype.splice.call(this, start, deleteCount, ...args)
+    } else {
+      ;[...(this.length - this.limit)].map(i => this.pop())
+      console.warn(`LimitedArray: Splicing beyond limit`)
+      return []
+    }
+  }
+
+  isFull() {
+    return this.length >= this.limit
   }
 }
 
@@ -248,6 +264,27 @@ class User {
   }
 }
 
+class Hand extends LimitedArray {
+  constructor(...args) {
+    super(...args)
+    this.setLimit(CONSTANTS.GLOBAL_LIMIT.HAND)
+    return this
+  }
+
+  add(card) {
+    // TODO: enable after duplicate fix
+    // if (!(card && card instanceof Card)) {
+    //   throw `only have cards can be added to Hand`
+    // }
+    this.push(card)
+    return this
+  }
+
+  remove(cardIndex) {
+    return this.splice(cardIndex, 1)
+  }
+}
+
 // Player is just a game state. user makes the actions, player stat gets changed
 class Player {
   constructor({ user, deck = new Deck, health = CONSTANTS.GAME_DEFAULTS.PLAYER_STARTING_HEALTH, manaPool = CONSTANTS.GAME_DEFAULTS.PLAYER_STARTING_MANA, hand = [], shuffle = true } = {}){
@@ -255,9 +292,7 @@ class Player {
     this.id = user.id
     this.health = health
     this.manaPool = this.mana = manaPool
-    this.hand = hand
-    this.hand.remove = this._removeFromHand.bind(this) // Just a fancier way, can be removed
-    this.hand.push = limitedArrayPush(CONSTANTS.GLOBAL_LIMIT.HAND, `Player-${this.id} hand`)
+    this.hand = new Hand(...hand)
     this.deck = deck
 
     shuffle && this.deck.shuffle()
@@ -292,46 +327,29 @@ class Player {
     }
   }
 
-  _removeFromHand(cardIndex) {
-    this.hand.splice(cardIndex, 1)
-  }
-
-  _giveToHand(card) {
-    // TODO: Card Duplicate issue
-    // if (!(card instanceof Card)) { throw `Hand can only contain cards` }
-    this.hand.push(card)
-  }
-
   drawCards(n = 1) {
-    ;[...n].map(i => this._giveToHand(this.deck.pop()))
-  }
-
-  isHandFull() {
-    return this.hand.length >= CONSTANTS.GLOBAL_LIMIT.HAND
+    ;[...n].map(i => this.hand.add(this.deck.pop()))
   }
 }
 
-class Board {
-  constructor({ player } = {}) {
-    if (!(player && player instanceof Player)) { throw `Board needs a player to initiate` }
-    this.board = []
-    this.board.add = this._addCard.bind(this)
-    this.board.remove = this._removeCard.bind(this)
-    this.board.splice = limitedArraySplice(CONSTANTS.GLOBAL_LIMIT.BOARD, `Player-${player.id} board`)
-    return this.board
-  }
-
-  _addCard(boardIndex, minion) {
-    // TODO: enable after duplicate fix
-    // if (!(minion && minion instanceof Card && minion.type !== CONSTANTS.cardType.MINION)) {
-    //   throw `Board can only add cards`
-    // }
-    this.board.splice(boardIndex, 0, minion)
+class Board extends LimitedArray {
+  constructor(...args) {
+    super(...args)
+    this.setLimit(CONSTANTS.GLOBAL_LIMIT.BOARD)
     return this
   }
 
-  _removeCard(boardIndex) {
-    return this.board.splice(boardIndex, 1)
+  add(boardIndex, minion) {
+    // TODO: enable after duplicate fix
+    // if (!(minion && minion instanceof Card && minion.type !== CONSTANTS.cardType.MINION)) {
+    //   throw `only minions can be added to Board`
+    // }
+    this.splice(boardIndex, 0, minion)
+    return this
+  }
+
+  remove(boardIndex) {
+    return this.splice(boardIndex, 1)
   }
 }
 
@@ -355,7 +373,7 @@ class Game {
       })
       user._currentGame = this
 
-      this.boards[user.id] = new Board({ player: this.players[user.id] })
+      this.boards[user.id] = new Board()
     })
 
 
@@ -395,7 +413,7 @@ class Game {
     }
   }
 
-  userMinionAttack(pId, boardIndex, { isOpponent = true, targetIndex = -1 }){
+  userMinionAttack(pId, boardIndex, targetIndex = -1){
     // index for any card in the board, -1 for hero
     this._checkIfPlayerTurn({ pId })
     const minion = this._getBoardMinion({ pId, boardIndex })
@@ -441,8 +459,8 @@ class Game {
   }
   _getOpponent({ isOpponent, ...args } = {}) { return this._getPlayer({ isOpponent: true, ...args }) }
 
-  _getBoard(...args) {
-    const id = this._getPlayer(...args).id
+  _getBoard({ pId, ...args } = {}) {
+    const id = pId || this._getPlayer({ ...args }).id
     // todo: common logger fn with args and more
     if (!this.boards[id]) { throw `_getBoard: Board not found. Something went wrong. args: ${JSON.stringify(args)}` }
     return this.boards[id]
@@ -560,13 +578,13 @@ try {
   game.userPlayCard(u1.id, 0)
   // game.userPlayCard(u1.id, 0)
   // game.userPlayCard(u1.id, 0)
-  game.userMinionAttack(u1.id, 0, { targetIndex: -1 })
+  game.userMinionAttack(u1.id, 0, -1)
   game.userEndTurn(u1.id)
 
   game.userPlayCard(u2.id, 0)
   game.render()
 
-  game.userMinionAttack(u2.id, 0, { targetIndex: 0 })
+  game.userMinionAttack(u2.id, 0, 0)
   game.userEndTurn(u2.id)
   game.render()
 } catch(e) {
