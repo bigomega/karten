@@ -9,9 +9,10 @@
   - Have a game, players, card collection, fill hands and deck
   - Option to play, attack, end turn
   - health reduction of minions and player
-  -x Sleep, charge and taunt
+  - Sleep, charge and taunt
+  -x limit hands and board
   -x better render console
-  -x Make it multiplayer
+  -x code file structuring
   -x UI render (basic)
   - Do not write anymore steps
 

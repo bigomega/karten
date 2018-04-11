@@ -45,6 +45,7 @@ const CONSTANTS = {
   allowedEffects: ['BATTLECRY', 'DEATHRATTLE'],
   allowedStates: ['TAUNT', 'POISONOUS', 'BLESSED', 'WINDFURY', 'STEALTH', 'CHARGE'],
 }
+CONSTANTS.states = CONSTANTS.allowedStates.reduce((mem, s) => (mem[s] = s, mem), {})
 
 class Spell {
   constructor(castOn) {
@@ -319,23 +320,28 @@ class Game {
     // todo: check can play (also check and allow only at turn start)
     // todo: need to give positioning options, limit size, need to add events
     const card = player.hand[cardIndex]
+    if (card.current.mana > player.mana) { throw `userPlayCard: Not enough mana <NOT_ENOUGH_MANA>` }
     if (card.type === CONSTANTS.cardType.MINION) {
       // todo: write a function to add and remove
       player.hand.splice(cardIndex, 1)
       card.turnPlayed = this.state.current_turn
       // todo: write a function to add
       this._getBoard({ pId }).push(card)
+      player.mana -= 1
     }
   }
 
   userMinionAttack(pId, boardIndex, { isOpponent = true, targetIndex = -1 }){
     // index for any card in the board, -1 for hero
     this._checkIfPlayerTurn({ pId })
-    const selfBoard = this._getBoard({ pId })
+    const minion = this._getBoardMinion({ pId, boardIndex })
+    if (minion.current.attack < 1) { throw `userMinionAttack: Can't attack, no damage <MINION_ZERO_ATTACK>` }
+    if (minion.turnPlayed === this.state.current_turn && !minion.current.states[CONSTANTS.states.CHARGE]) {
+      throw `userMinionAttack: minion played this turn can't attack <MINION_SLEEPING>`
+    }
     const enemyBoard = this._getBoard({ pId, isOpponent: true })
-    const minion = this._getBoardMinion({ board: selfBoard, boardIndex })
     // todo: "when minion attacks" action/secret
-    const tauntIndices = enemyBoard.findIndices(c => c.current.states.taunt)
+    const tauntIndices = enemyBoard.findIndices(c => c.current.states[CONSTANTS.states.TAUNT])
     if (tauntIndices.length && !tauntIndices.includes(targetIndex)) {
       // todo: catch this outside
       throw `userMinionAttack: Can't attack past taunts (at ${tauntIndices}) <TAUNT_IN_WAY>`
@@ -355,6 +361,7 @@ class Game {
   userEndTurn(uId) {
     this.state.current_turn += 1
     this.state.current_player = this._getPlayer({ player: this.state.current_player, isOpponent: true })
+    this.newTurnInit()
   }
 
   _getPlayer({ pId, player, isOpponent = false } = {}) {
@@ -394,7 +401,7 @@ class Game {
   _checkIfPlayerTurn({ pId, player = {} } = {}) {
     // todo: turn this into a decorator
     // if (!this.players[(pId || player.id)]) { throw `User not a part of the game.` } // redundant
-    if ((pId || player.id) !== this.state.current_player.id) { throw `Not this user's turn to play` }
+    if ((pId || player.id) !== this.state.current_player.id) { throw `Not this user's turn to play <NOT_PLAYER_TURN>` }
     return true
   }
 
@@ -402,10 +409,12 @@ class Game {
     const players = [...this.players]
     console.log(`p1: id(${players[0].id}), p2: id(${players[1].id})`)
     console.log('p1 - topdeck: ', players[0].deck.lastCard())
+    console.log(`p1 - mana: ${players[0].mana}/${players[0].manaPool}`)
     console.log('p1 - hand: ', players[0].hand.map(c => c.id))
     console.log('p1 - board: ', this.board.sides[players[0].id].board.map(c => c.id))
     console.log('p2 - board: ', this.board.sides[players[1].id].board.map(c => c.id))
     console.log('p2 - hand: ', players[1].hand.map(c => c.id))
+    console.log(`p2 - mana: ${players[1].mana}/${players[1].manaPool}`)
     console.log('p2 - topdeck: ', players[1].deck.lastCard())
     console.log([...20].map(i => '-').join(''))
   }
@@ -442,27 +451,35 @@ catalog.addCard({
   mana: 1,
   cardType: 'MINION',
   name: 'Sword',
-  attack: 2,
-  health: 1,
-  states: ['charge'],
+  attack: 1,
+  health: 3,
 })
 catalog.addCard({
   mana: 1,
   cardType: 'MINION',
   name: 'Shield',
-  attack: 1,
-  health: 3,
-  states: ['taunt'],
+  attack: 0,
+  health: 5,
+  states: [CONSTANTS.states.TAUNT],
+})
+catalog.addCard({
+  mana: 1,
+  cardType: 'MINION',
+  name: 'Arrow',
+  attack: 2,
+  health: 1,
+  states: [CONSTANTS.states.CHARGE],
 })
 
 var u1 = new User({ username: 'foo', pass: 'pass' })
 var u2 = new User({ username: 'bar', pass: 'pass' })
 
-;[...15].map(i => {
+;[...10].map(i => {
   var c1 = catalog.search({ name: 'Sword' })[0]
-  var c2 = catalog.search({ name: 'Shield' })[0]
-  u1.deckList[0].push(c1.id, c2.id)
-  u2.deckList[0].push(c1.id, c2.id)
+  var c2 = catalog.search({ name: 'Shield' }).pop()
+  var c3 = catalog.search({ name: 'Arrow' })[0]
+  u1.deckList[0].push(c1.id, c2.id, c3.id)
+  u2.deckList[0].push(c1.id, c2.id, c3.id)
 })
 
 // picked by user
@@ -478,15 +495,23 @@ var game = new Game({
 ;[...game.players][0].drawCards(3)
 ;[...game.players][1].drawCards(3)
 
-game.render()
-game.userPlayCard(u1.id, 0)
-game.userPlayCard(u1.id, 0)
-game.userPlayCard(u1.id, 0)
-game.userMinionAttack(u1.id, 0, { targetIndex: -1 })
-game.userEndTurn(u1.id)
+try {
+  game.render()
+  game.userPlayCard(u1.id, 0)
+  // game.userPlayCard(u1.id, 0)
+  // game.userPlayCard(u1.id, 0)
+  game.userMinionAttack(u1.id, 0, { targetIndex: -1 })
+  game.userEndTurn(u1.id)
 
-game.userPlayCard(u2.id, 0)
-game.render()
+  game.userPlayCard(u2.id, 0)
+  game.render()
 
-game.userMinionAttack(u2.id, 0, { targetIndex: 0 })
-game.render()
+  game.userMinionAttack(u2.id, 0, { targetIndex: 0 })
+  game.userEndTurn(u2.id)
+  game.render()
+} catch(e) {
+  if (! /\<[a-zA-Z0-9_:]+\>$/.test(e)) {
+    throw e
+  }
+  console.log(e)
+}
