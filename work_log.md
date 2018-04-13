@@ -11,7 +11,7 @@
   - health reduction of minions and player
   - Sleep, charge and taunt
   - limit hands and board
-  -x better render console
+  - better render console
   -x tech debts (v1)
   -x Mulligan and game start
   -x UI render (basic)

@@ -151,7 +151,7 @@ class Card {
     this.default = this.current = { mana }
     this.buffs = []
 
-    if (this.type === CONSTANTS.cardType.MINION) {
+    if (this.isMinion()) {
       this.default = this.current = {
         ...this.default,
         attack: attack,
@@ -185,12 +185,23 @@ class Card {
     return this
   }
 
-  setOriginalStates(states = []) {
-    if (this.type !== CONSTANTS.cardType.MINION) {
-      // warn
-      return this
+  onPlay({ turn }) {
+    this.turnPlayed = turn
+    if (this.isMinion()) {
+      if (!this.current.states[CONSTANTS.states.CHARGE]) {
+        this.sleeping = true
+      }
+      this.hasAttackedThisTurn = 0
     }
-    return this
+  }
+
+  onTurnStart(turn) {
+    this.hasAttackedThisTurn = 0
+    this.sleeping = false
+  }
+
+  isMinion() {
+    return this.type === CONSTANTS.cardType.MINION
   }
 
   // addEffects(effects = {}) {
@@ -300,10 +311,10 @@ class Player {
 
   damage(value) {
     this.health -= value
-    // todo: catch this outside
     if (this.health <= 0) {
-      throw `Game ended: (${this.id}) WON <GAME_ENDED:${this.id}>`
+      return { lost: 1 }
     }
+    return this.health
   }
 
   giveMana(mana = 1) {
@@ -382,7 +393,7 @@ class Game {
       current_player: [...this.players][0],
     }
     this.state.current_player.drawCards(CONSTANTS.GAME_DEFAULTS.STARTING_HAND)
-    this._getPlayer({ isOpponent: true }).drawCards(CONSTANTS.GAME_DEFAULTS.STARTING_HAND + 1)
+    this._getOpponent().drawCards(CONSTANTS.GAME_DEFAULTS.STARTING_HAND + 1)
     this.newTurnInit()
   }
 
@@ -392,6 +403,7 @@ class Game {
     this.state.current_player.drawCards(CONSTANTS.GAME_DEFAULTS.TURN_START_CARD_DRAW)
     this.state.current_player.giveManaPool(CONSTANTS.GAME_DEFAULTS.TURN_START_MANAPOOL_GAIN)
     this.state.current_player.setMana(Infinity)
+    this._getBoard().map(c => c.onTurnStart())
   }
 
   userPlayCard(pId, cardIndex){
@@ -406,11 +418,13 @@ class Game {
     if (card.current.mana > player.mana) { throw `userPlayCard: Not enough mana <NOT_ENOUGH_MANA>` }
     if (card.type === CONSTANTS.cardType.MINION) {
       player.hand.remove(cardIndex)
-      card.turnPlayed = this.state.current_turn
+      card.onPlay({ turn: this.state.current_turn, position: 0 })
       // todo: get position from user
       this._getBoard({ pId }).add(0, card)
       player.mana -= 1
     }
+    console.log('== userPlayCard')
+    this.render()
   }
 
   userMinionAttack(pId, boardIndex, targetIndex = -1){
@@ -418,8 +432,11 @@ class Game {
     this._checkIfPlayerTurn({ pId })
     const minion = this._getBoardMinion({ pId, boardIndex })
     if (minion.current.attack < 1) { throw `userMinionAttack: Can't attack, no damage minion <ZERO_ATTACK_MINION>` }
-    if (minion.turnPlayed === this.state.current_turn && !minion.current.states[CONSTANTS.states.CHARGE]) {
+    if (minion.sleeping) {
       throw `userMinionAttack: minion played this turn can't attack <MINION_SLEEPING>`
+    }
+    if (minion.hasAttackedThisTurn) {
+      throw `This minion has already attacked this turn`
     }
     const enemyBoard = this._getBoard({ pId, isOpponent: true })
     // todo: "when minion attacks" action/secret
@@ -429,7 +446,9 @@ class Game {
       throw `userMinionAttack: Can't attack past taunts (at ${tauntIndices}) <TAUNT_IN_WAY>`
     }
     if (targetIndex < 0) {
-      this._getPlayer({ pId, isOpponent: true }).damage(minion.current.attack)
+      if (this._getOpponent({ pId }).damage(minion.current.attack).lost) {
+        throw `Game ended: (${pId}) WON <GAME_ENDED:${pId}>`
+      }
     } else {
       const targetMinion = this._getBoardMinion({ board: enemyBoard, boardIndex: targetIndex })
       targetMinion.current.health -= minion.current.attack
@@ -438,11 +457,15 @@ class Game {
       minion.current.health <= 0 && this._killMinion({ pId, boardIndex })
       targetMinion.current.health <= 0 && this._killMinion({ pId, boardIndex: targetIndex, isOpponent: true })
     }
+    minion.hasAttackedThisTurn += 1
+    console.log('== userMinionAttack')
+    this.render()
   }
 
-  userEndTurn(uId) {
+  userEndTurn(pId) {
+    this._checkIfPlayerTurn({ pId })
     this.state.current_turn += 1
-    this.state.current_player = this._getPlayer({ isOpponent: true })
+    this.state.current_player = this._getOpponent()
     this.newTurnInit()
   }
 
@@ -460,7 +483,7 @@ class Game {
   _getOpponent({ isOpponent, ...args } = {}) { return this._getPlayer({ isOpponent: true, ...args }) }
 
   _getBoard({ pId, ...args } = {}) {
-    const id = pId || this._getPlayer({ ...args }).id
+    const id = (!args.isOpponent && pId) || this._getPlayer({ ...args }).id
     // todo: common logger fn with args and more
     if (!this.boards[id]) { throw `_getBoard: Board not found. Something went wrong. args: ${JSON.stringify(args)}` }
     return this.boards[id]
@@ -487,17 +510,18 @@ class Game {
   }
 
   render(){
-    const players = [...this.players]
-    console.log(`p1: id(${players[0].id}), p2: id(${players[1].id})`)
-    console.log('p1 - topdeck: ', players[0].deck.lastCard())
-    console.log(`p1 - mana: ${players[0].mana}/${players[0].manaPool}`)
-    console.log('p1 - hand: ', players[0].hand.map(c => c.id))
-    console.log('p1 - board: ', this.boards[players[0].id].map(c => c.id))
-    console.log('p2 - board: ', this.boards[players[1].id].map(c => c.id))
-    console.log('p2 - hand: ', players[1].hand.map(c => c.id))
-    console.log(`p2 - mana: ${players[1].mana}/${players[1].manaPool}`)
-    console.log('p2 - topdeck: ', players[1].deck.lastCard())
+    const [p1, p2] = [...this.players]
     console.log([...20].map(i => '-').join(''))
+    console.log(`p${this.state.current_player.id} turn to play`)
+    console.log([...20].map(i => '-').join(''))
+    console.log(`p1 - health: ${p1.health}, mana: ${p1.mana}/${p1.manaPool}`, ', hand:', Array(...p1.hand).map(c => c.name))
+    console.log('board: ', Array(...this._getBoard({ player: p1 }))
+      .map(c => `${c.current.attack} -${Object.keys(c.current.states)}- ${c.current.health} (${c.name})`)
+    )
+    console.log('board: ', Array(...this._getBoard({ player: p2 }))
+      .map(c => `${c.current.attack} -${Object.keys(c.current.states)}- ${c.current.health} (${c.name})`)
+    )
+    console.log(`p2 - health: ${p2.health}, mana: ${p2.mana}/${p2.manaPool}`, ', hand:', Array(...p2.hand).map(c => c.name))
   }
 }
 
@@ -566,27 +590,28 @@ var u2 = new User({ username: 'bar', pass: 'pass' })
 // picked by user
 var deckIndex = 0
 
-var game = new Game({
-  players: [
-    { user: u1, deck: new Deck(catalog.generatDeck(u1.getDeck(deckIndex))), playerConfig: {} },
-    { user: u2, deck: new Deck(catalog.generatDeck(u2.getDeck(deckIndex))), playerConfig: {} },
-  ]
-})
 
+// for ease of use only
+const p1 = {}
+const p2 = {}
 try {
+  var game = new Game({
+    players: [
+      { user: u1, deck: new Deck(catalog.generatDeck(u1.getDeck(deckIndex))), playerConfig: {} },
+      { user: u2, deck: new Deck(catalog.generatDeck(u2.getDeck(deckIndex))), playerConfig: {} },
+    ]
+  })
+  console.log('p1:',u1.id, '  p2:', u2.id)
+  console.log('Avilable functions: p1.[play, attack, endTurn] (same for p2)')
   game.render()
-  game.userPlayCard(u1.id, 0)
-  // game.userPlayCard(u1.id, 0)
-  // game.userPlayCard(u1.id, 0)
-  game.userMinionAttack(u1.id, 0, -1)
-  game.userEndTurn(u1.id)
 
-  game.userPlayCard(u2.id, 0)
-  game.render()
+  p1.play= (...args) => game.userPlayCard(u1.id, ...args)
+  p1.attack = (...args) => game.userMinionAttack(u1.id, ...args)
+  p1.endTurn = x => game.userEndTurn(u1.id)
 
-  game.userMinionAttack(u2.id, 0, 0)
-  game.userEndTurn(u2.id)
-  game.render()
+  p2.play= (...args) => game.userPlayCard(u2.id, ...args)
+  p2.attack = (...args) => game.userMinionAttack(u2.id, ...args)
+  p2.endTurn = x => game.userEndTurn(u2.id)
 } catch(e) {
   if (! /\<[a-zA-Z0-9_:]+\>$/.test(e)) {
     throw e
