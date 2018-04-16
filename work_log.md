@@ -16,4 +16,5 @@
   -x Mulligan and game start
   -x UI render (basic)
   - Do not write anymore steps
+- Build a *Cubelock* deck
 

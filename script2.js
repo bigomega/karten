@@ -24,8 +24,8 @@ Array.prototype.findIndexes = Array.prototype.findIndices = function findIndexes
 
 // utils
 class LimitedArray extends Array {
-  constructor(...args) {
-    super(...args)
+  constructor() {
+    super(...arguments)
     this.limit = 50
   }
 
@@ -35,9 +35,9 @@ class LimitedArray extends Array {
     return this
   }
 
-  push(...args) {
-    if (this.length + args.length <= this.limit) {
-      return Array.prototype.push.call(this, ...args)
+  push() {
+    if (this.length + arguments.length <= this.limit) {
+      return Array.prototype.push.call(this, ...arguments)
     } else {
       ;[...(this.length - this.limit)].map(i => this.pop())
       console.warn(`LimitedArray: Pushing beyond limit`)
@@ -91,29 +91,28 @@ class Spell {
   }
 }
 
-class CardCollection {
+class CardCollection extends Array {
   constructor() {
-    this.collection = {};
+    super()
   }
 
   import(dbData) {}
 
-  addCard(){
-    const card = new Card(...arguments)
+  addCard({ ...args }){
+    const card = new Card({ id: this.length, ...args })
     if (this.search({ name: card.name }).length) {
       // warn
       return this.search({ name: card.name })[0]
     }
-    return this.collection[card.id] = card
+    return this[this.length/* or card.id */] = card
   }
 
   search({ id, name, mana, tags }) {
     if (id) {
-      const card = this.collection[id]
-      return card ? [card] : []
+      return this[id] ? [this[id]] : []
     }
     if (name) {
-      return [...this.collection].filter(card =>
+      return this.filter(card =>
         card.name.toLowerCase().includes(name.toLowerCase())
       )
     }
@@ -122,9 +121,10 @@ class CardCollection {
   }
 
   generatDeck(cardIds = []){
-    return []
-      .concat(...cardIds.map(cid => this.search({ id: cid })))
-      .map(card => card.duplicate())
+    return cardIds
+      .map(cid => this[cid])
+      .filter(card => card !== undefined)
+      .map(card => card.clone())
     ;
   }
 
@@ -222,9 +222,16 @@ class Card {
   //   return this
   // }
 
-  duplicate() {
-    // TODO: FIX THIS (THIS TAKES AWAY THE OBEJECT INSTANCE TYPE)
-    return JSON.parse(JSON.stringify(this))
+  clone(obj = this) {
+    // Will fail if there's a self referencing object loop
+    const clone = Object.create(obj)
+    for(var i in obj) {
+      if(obj[i] != null && typeof(obj[i])=="object")
+        clone[i] = this.clone(obj[i])
+      else
+        clone[i] = obj[i]
+    }
+    return clone
   }
 }
 
@@ -276,17 +283,16 @@ class User {
 }
 
 class Hand extends LimitedArray {
-  constructor(...args) {
-    super(...args)
+  constructor() {
+    super(...arguments)
     this.setLimit(CONSTANTS.GLOBAL_LIMIT.HAND)
     return this
   }
 
   add(card) {
-    // TODO: enable after duplicate fix
-    // if (!(card && card instanceof Card)) {
-    //   throw `only have cards can be added to Hand`
-    // }
+    if (!(card && card instanceof Card)) {
+      throw `only have cards can be added to Hand`
+    }
     this.push(card)
     return this
   }
@@ -344,17 +350,16 @@ class Player {
 }
 
 class Board extends LimitedArray {
-  constructor(...args) {
-    super(...args)
+  constructor() {
+    super(...arguments)
     this.setLimit(CONSTANTS.GLOBAL_LIMIT.BOARD)
     return this
   }
 
   add(boardIndex, minion) {
-    // TODO: enable after duplicate fix
-    // if (!(minion && minion instanceof Card && minion.type !== CONSTANTS.cardType.MINION)) {
-    //   throw `only minions can be added to Board`
-    // }
+    if (!(minion && minion instanceof Card && minion.isMinion())) {
+      throw `only minions can be added to Board`
+    }
     this.splice(boardIndex, 0, minion)
     return this
   }
@@ -491,10 +496,9 @@ class Game {
   _getBoardMinion({ boardIndex = 0, board, ...args } = {}) {
     const minion = (board || this._getBoard({...args}))[boardIndex]
     // todo: maybe think about inherting card into spells and minions
-    // if (!(minion && minion instanceof Card && minion.type !== CONSTANTS.cardType.MINION)) {
-    //   throw `_getBoardMinion: Minion not found`
-    // }
-    // TODO: enable this ^ after duplicate fix
+    if (!(minion && minion instanceof Card && minion.isMinion())) {
+      throw `_getBoardMinion: Minion not found`
+    }
     return minion
   }
 
