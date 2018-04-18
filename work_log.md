@@ -12,9 +12,11 @@
   - Sleep, charge and taunt
   - limit hands and board
   - better render console
-  -x tech debts (v1)
-  -x Mulligan and game start
-  -x UI render (basic)
+  - -X- tech debts (v1)
+  - -X- Mulligan and game start
+  - -X- chumma draw a screen
+  - -X- UI render (basic)
+  - -X- basic unit tests
   - Do not write anymore steps
-- Build a *Cubelock* deck
+- Build a **Cubelock** deck
 

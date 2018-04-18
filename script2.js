@@ -40,7 +40,7 @@ class LimitedArray extends Array {
       return Array.prototype.push.call(this, ...arguments)
     } else {
       ;[...(this.length - this.limit)].map(i => this.pop())
-      console.warn(`LimitedArray: Pushing beyond limit`)
+      console.warn(`LimitedArray: Pushing beyond limit. Ignored`)
       return this.length
     }
   }
@@ -50,7 +50,7 @@ class LimitedArray extends Array {
       return Array.prototype.splice.call(this, start, deleteCount, ...args)
     } else {
       ;[...(this.length - this.limit)].map(i => this.pop())
-      console.warn(`LimitedArray: Splicing beyond limit`)
+      console.warn(`LimitedArray: Splicing beyond limit. Ignored`)
       return []
     }
   }
@@ -101,7 +101,7 @@ class CardCollection extends Array {
   addCard({ ...args }){
     const card = new Card({ id: this.length, ...args })
     if (this.search({ name: card.name }).length) {
-      // warn
+      console.warn('Cannot add card: card with the same name already exists')
       return this.search({ name: card.name })[0]
     }
     return this[this.length/* or card.id */] = card
@@ -129,19 +129,19 @@ class CardCollection extends Array {
   }
 
   save() {
-    // to DB
+    // TK to DB
   }
 }
 
 class Card {
-  constructor({ mana = 0, cardType = CONSTANTS.cardType.MINION, name, attack = 0, health = 1, states = [], tags = [] } = {}) {
+  constructor({ mana = 0, cardType = CONSTANTS.cardType.MINION, spellArgs, name, attack = 0, health = 1, states = [], tags = [] } = {}) {
     if (!name) {
       throw 'Card creation error: Name is a mandatory field'
     }
     if (cardType in CONSTANTS.cardType) {
       this.type = cardType
     } else {
-      // warn
+      console.warn('Card type invalid: setting it to MINION by default')
       this.type = 'MINION'
     }
 
@@ -171,20 +171,6 @@ class Card {
     return this._nextId++
   }
 
-  addSpell(spell = new Spell) {
-    if (this.type !== CONSTANTS.cardType.SPELL) {
-      // warn
-      return this
-    }
-    if (spell instanceof Spell){
-      this.spell = spell
-    } else {
-      // warn
-      this.spell = new Spell
-    }
-    return this
-  }
-
   onPlay({ turn }) {
     this.turnPlayed = turn
     if (this.isMinion()) {
@@ -202,6 +188,19 @@ class Card {
 
   isMinion() {
     return this.type === CONSTANTS.cardType.MINION
+  }
+
+  damage(value) {
+    this.current.health -= value
+    if (this.current.health <= 0) {
+      return { dead: 1 }
+    }
+    return this.current.health
+    // TK make this event based (send an event and game/board must be listening)
+  }
+
+  isSpell() {
+    return this.type === CONSTANTS.cardType.SPELL
   }
 
   // addEffects(effects = {}) {
@@ -272,8 +271,8 @@ class User {
   }
 
   getDeck(deckIndex) {
-    // Todo throw error
-    return this.deckList[deckIndex] || []
+    if (!this.deckList[deckIndex]) { throw `deckIndex not found for user` }
+    return this.deckList[deckIndex]
   }
 
   static generateID() {
@@ -411,21 +410,28 @@ class Game {
     this._getBoard().map(c => c.onTurnStart())
   }
 
-  userPlayCard(pId, cardIndex){
+  userCanPlayCard(player, card) {
+    if (card.current.mana > player.mana) { throw `userCanPlayCard: Not enough mana <NOT_ENOUGH_MANA>` }
+    if (card.isMinion()) {
+      if (this._getBoard({ player }).isFull()) { throw `userCanPlayCard: No space in board` }
+    }
+  }
+
+  userPlayCard(pId, cardIndex, boardPosition = 0){
     this._checkIfPlayerTurn({ pId })
     const player = this._getPlayer({ pId })
     if (cardIndex >= player.hand.length) {
       throw `userPlayCard: Card index not found in hand`
     }
-    // todo: check can play (also check and allow only at turn start)
-    // todo: need to give positioning options, limit size, need to add events
+    // TK need to add events
     const card = player.hand[cardIndex]
-    if (card.current.mana > player.mana) { throw `userPlayCard: Not enough mana <NOT_ENOUGH_MANA>` }
-    if (card.type === CONSTANTS.cardType.MINION) {
+    this.userCanPlayCard(player, card)
+    if (card.isMinion()) {
+      const board = this._getBoard({ pId })
+      boardIndex = boardPosition > board.length ? board.length : boardPosition
       player.hand.remove(cardIndex)
-      card.onPlay({ turn: this.state.current_turn, position: 0 })
-      // todo: get position from user
-      this._getBoard({ pId }).add(0, card)
+      card.onPlay({ turn: this.state.current_turn, position: boardIndex })
+      board.add(boardIndex, card)
       player.mana -= 1
     }
     console.log('== userPlayCard')
@@ -444,23 +450,19 @@ class Game {
       throw `This minion has already attacked this turn`
     }
     const enemyBoard = this._getBoard({ pId, isOpponent: true })
-    // todo: "when minion attacks" action/secret
+    // TK "when minion attacks" action/secret
     const tauntIndices = enemyBoard.findIndices(c => c.current.states[CONSTANTS.states.TAUNT])
     if (tauntIndices.length && !tauntIndices.includes(targetIndex)) {
-      // todo: catch this outside
       throw `userMinionAttack: Can't attack past taunts (at ${tauntIndices}) <TAUNT_IN_WAY>`
     }
     if (targetIndex < 0) {
-      if (this._getOpponent({ pId }).damage(minion.current.attack).lost) {
+      if (this._getOpponent({ pId }).damage(minion.current.attack).dead) {
         throw `Game ended: (${pId}) WON <GAME_ENDED:${pId}>`
       }
     } else {
       const targetMinion = this._getBoardMinion({ board: enemyBoard, boardIndex: targetIndex })
-      targetMinion.current.health -= minion.current.attack
-      minion.current.health -= targetMinion.current.attack
-      // todo: write functions for reduce health
-      minion.current.health <= 0 && this._killMinion({ pId, boardIndex })
-      targetMinion.current.health <= 0 && this._killMinion({ pId, boardIndex: targetIndex, isOpponent: true })
+      targetMinion.damage(minion.current.attack).dead && this._killMinion({ pId, boardIndex: targetIndex, isOpponent: true })
+      minion.damage(targetMinion.current.attack).dead && this._killMinion({ pId, boardIndex })
     }
     minion.hasAttackedThisTurn += 1
     console.log('== userMinionAttack')
@@ -507,7 +509,6 @@ class Game {
   }
 
   _checkIfPlayerTurn({ pId, player = {} } = {}) {
-    // todo: turn this into a decorator
     // if (!this.players[(pId || player.id)]) { throw `User not a part of the game.` } // redundant
     if ((pId || player.id) !== this.state.current_player.id) { throw `Not this user's turn to play <NOT_PLAYER_TURN>` }
     return true
@@ -531,7 +532,7 @@ class Game {
 
 class GameController {
   constructor(){
-    // setup event handlers?
+    // TK setup event handlers?
   }
 
   startGame(){}
@@ -609,11 +610,11 @@ try {
   console.log('Avilable functions: p1.[play, attack, endTurn] (same for p2)')
   game.render()
 
-  p1.play= (...args) => game.userPlayCard(u1.id, ...args)
+  p1.play = (...args) => game.userPlayCard(u1.id, ...args)
   p1.attack = (...args) => game.userMinionAttack(u1.id, ...args)
   p1.endTurn = x => game.userEndTurn(u1.id)
 
-  p2.play= (...args) => game.userPlayCard(u2.id, ...args)
+  p2.play = (...args) => game.userPlayCard(u2.id, ...args)
   p2.attack = (...args) => game.userMinionAttack(u2.id, ...args)
   p2.endTurn = x => game.userEndTurn(u2.id)
 } catch(e) {
