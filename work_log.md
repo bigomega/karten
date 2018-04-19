@@ -12,7 +12,7 @@
   - Sleep, charge and taunt
   - limit hands and board
   - better render console
-  - -X- tech debts (v1)
+  - tech debts (v1)
   - -X- Mulligan and game start
   - -X- chumma draw a screen
   - -X- UI render (basic)

@@ -1,4 +1,3 @@
-// todo: split this goddamn huge file into multiple modules
 Number.prototype[Symbol.iterator] = function* () {
   for (i=0; i<this; i++) {
     yield i
@@ -85,26 +84,24 @@ const CONSTANTS = {
 }
 CONSTANTS.states = CONSTANTS.allowedStates.reduce((mem, s) => (mem[s] = s, mem), {})
 
-class Spell {
+class SpellAction {
   constructor(castOn) {
     //
   }
 }
 
 class CardCollection extends Array {
-  constructor() {
-    super()
+  constructor(...args) {
+    super(...args)
   }
 
-  import(dbData) {}
-
-  addCard({ ...args }){
-    const card = new Card({ id: this.length, ...args })
-    if (this.search({ name: card.name }).length) {
-      console.warn('Cannot add card: card with the same name already exists')
-      return this.search({ name: card.name })[0]
+  addMinion({ ...args }){
+    if (!args.name){ throw `addMinion: Name not provided` }
+    if (this.search({ name: args.name }).length) {
+      console.warn(`addMinion: The name "${args.name}" already exists`)
+      return this.search({ name: args.name })
     }
-    return this[this.length/* or card.id */] = card
+    return this[this.length] = new Minion({ _id: this.length, ...args })
   }
 
   search({ id, name, mana, tags }) {
@@ -127,67 +124,72 @@ class CardCollection extends Array {
       .map(card => card.clone())
     ;
   }
-
-  save() {
-    // TK to DB
-  }
 }
 
 class Card {
-  constructor({ mana = 0, cardType = CONSTANTS.cardType.MINION, spellArgs, name, attack = 0, health = 1, states = [], tags = [] } = {}) {
+  constructor({ _id, mana = 0, name, tags = [] } = {}) {
     if (!name) {
       throw 'Card creation error: Name is a mandatory field'
     }
-    if (cardType in CONSTANTS.cardType) {
-      this.type = cardType
-    } else {
-      console.warn('Card type invalid: setting it to MINION by default')
-      this.type = 'MINION'
-    }
 
-    this.id = Card.generateID()
+    this.id = _id || Card.generateID()
     this.name = name
     this.tags = tags
     this.default = this.current = { mana }
-    this.buffs = []
-
-    if (this.isMinion()) {
-      this.default = this.current = {
-        ...this.default,
-        attack: attack,
-        health: health,
-      }
-      this.default.states = this.current.states = {}
-      states.forEach(state => {
-        if (CONSTANTS.allowedStates.includes(state.toUpperCase())) {
-          this.default.states[state] = this.current.states[state] = 1
-        }
-      })
-    }
   }
 
   static generateID() {
-    this._nextId = this._nextId || 1
+    this._nextId = this._nextId || 10000
     return this._nextId++
+  }
+
+  onPlay({ turn }) {}
+
+  onTurnStart(turn) {}
+
+  clone(obj = this) {
+    // todo: Will likely fail when spells and battlecry are implemented (self-reference possibility)
+    const clone = Object.create(obj)
+    for(var i in obj) {
+      if(obj[i] != null && typeof(obj[i])=="object")
+        clone[i] = this.clone(obj[i])
+      else
+        clone[i] = obj[i]
+    }
+    return clone
+  }
+}
+
+class Minion extends Card {
+  constructor(...args) {
+    super(...args)
+    const { attack = 0, health = 1, states = [] } = args[0]
+    this.buffs = []
+
+    this.default = this.current = {
+      ...this.default,
+      attack: attack,
+      health: health,
+      states: {},
+    }
+    states.forEach(state => {
+      if (CONSTANTS.allowedStates.includes(state.toUpperCase())) {
+        this.default.states[state] = this.current.states[state] = 1
+      }
+    })
   }
 
   onPlay({ turn }) {
     this.turnPlayed = turn
-    if (this.isMinion()) {
-      if (!this.current.states[CONSTANTS.states.CHARGE]) {
-        this.sleeping = true
-      }
-      this.hasAttackedThisTurn = 0
+    if (!this.current.states[CONSTANTS.states.CHARGE]) {
+      this.sleeping = true
     }
+    this.hasAttackedThisTurn = 0
   }
 
   onTurnStart(turn) {
     this.hasAttackedThisTurn = 0
     this.sleeping = false
-  }
-
-  isMinion() {
-    return this.type === CONSTANTS.cardType.MINION
   }
 
   damage(value) {
@@ -197,10 +199,6 @@ class Card {
     }
     return this.current.health
     // TK make this event based (send an event and game/board must be listening)
-  }
-
-  isSpell() {
-    return this.type === CONSTANTS.cardType.SPELL
   }
 
   // addEffects(effects = {}) {
@@ -220,17 +218,11 @@ class Card {
   //   })
   //   return this
   // }
+}
 
-  clone(obj = this) {
-    // Will fail if there's a self referencing object loop
-    const clone = Object.create(obj)
-    for(var i in obj) {
-      if(obj[i] != null && typeof(obj[i])=="object")
-        clone[i] = this.clone(obj[i])
-      else
-        clone[i] = obj[i]
-    }
-    return clone
+class Spell extends Card {
+  constructor(...args) {
+    super(...args)
   }
 }
 
@@ -356,7 +348,7 @@ class Board extends LimitedArray {
   }
 
   add(boardIndex, minion) {
-    if (!(minion && minion instanceof Card && minion.isMinion())) {
+    if (!(minion && minion instanceof Minion)) {
       throw `only minions can be added to Board`
     }
     this.splice(boardIndex, 0, minion)
@@ -401,8 +393,6 @@ class Game {
     this.newTurnInit()
   }
 
-  do(){}
-
   newTurnInit() {
     this.state.current_player.drawCards(CONSTANTS.GAME_DEFAULTS.TURN_START_CARD_DRAW)
     this.state.current_player.giveManaPool(CONSTANTS.GAME_DEFAULTS.TURN_START_MANAPOOL_GAIN)
@@ -412,7 +402,7 @@ class Game {
 
   userCanPlayCard(player, card) {
     if (card.current.mana > player.mana) { throw `userCanPlayCard: Not enough mana <NOT_ENOUGH_MANA>` }
-    if (card.isMinion()) {
+    if (card && card instanceof Minion) {
       if (this._getBoard({ player }).isFull()) { throw `userCanPlayCard: No space in board` }
     }
   }
@@ -426,9 +416,9 @@ class Game {
     // TK need to add events
     const card = player.hand[cardIndex]
     this.userCanPlayCard(player, card)
-    if (card.isMinion()) {
+    if (card instanceof Minion) {
       const board = this._getBoard({ pId })
-      boardIndex = boardPosition > board.length ? board.length : boardPosition
+      const boardIndex = boardPosition > board.length ? board.length : boardPosition
       player.hand.remove(cardIndex)
       card.onPlay({ turn: this.state.current_turn, position: boardIndex })
       board.add(boardIndex, card)
@@ -491,14 +481,12 @@ class Game {
 
   _getBoard({ pId, ...args } = {}) {
     const id = (!args.isOpponent && pId) || this._getPlayer({ ...args }).id
-    // todo: common logger fn with args and more
     if (!this.boards[id]) { throw `_getBoard: Board not found. Something went wrong. args: ${JSON.stringify(args)}` }
     return this.boards[id]
   }
   _getBoardMinion({ boardIndex = 0, board, ...args } = {}) {
     const minion = (board || this._getBoard({...args}))[boardIndex]
-    // todo: maybe think about inherting card into spells and minions
-    if (!(minion && minion instanceof Card && minion.isMinion())) {
+    if (!(minion && minion instanceof Minion)) {
       throw `_getBoardMinion: Minion not found`
     }
     return minion
@@ -557,24 +545,21 @@ class GameController {
 // Game
 
 var catalog = new CardCollection()
-catalog.addCard({
+catalog.addMinion({
   mana: 1,
-  cardType: 'MINION',
   name: 'Sword',
   attack: 1,
   health: 3,
 })
-catalog.addCard({
+catalog.addMinion({
   mana: 1,
-  cardType: 'MINION',
   name: 'Shield',
   attack: 0,
   health: 5,
   states: [CONSTANTS.states.TAUNT],
 })
-catalog.addCard({
+catalog.addMinion({
   mana: 1,
-  cardType: 'MINION',
   name: 'Arrow',
   attack: 2,
   health: 1,
